@@ -1,18 +1,19 @@
 ﻿using Nito.AsyncEx;
 using Soenneker.ConcurrentProcessing.Executor.Abstract;
-using System.Collections.Generic;
-using System.Threading.Tasks;
-using System.Threading;
 using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Soenneker.Utils.Random;
 using Soenneker.Extensions.Task;
 using Soenneker.Extensions.ValueTask;
+using Soenneker.Utils.Delay;
 
 namespace Soenneker.ConcurrentProcessing.Executor;
 
 /// <inheritdoc cref="IConcurrentProcessingExecutor"/>
-public class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
+public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
 {
     private readonly AsyncSemaphore _semaphore;
     private readonly ILogger? _logger;
@@ -25,70 +26,70 @@ public class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
 
     public async ValueTask Execute(List<Func<Task>> taskFactories, CancellationToken cancellationToken = default)
     {
+        // Pre-size the list of running tasks to avoid internal resizes
         var runningTasks = new List<Task>(taskFactories.Count);
 
-        foreach (Func<Task> taskFactory in taskFactories)
+        for (var i = 0; i < taskFactories.Count; i++)
         {
-            await _semaphore.WaitAsync(cancellationToken)
-                            .ConfigureAwait(false);
+            Func<Task> taskFactory = taskFactories[i];
+            await _semaphore.WaitAsync(cancellationToken).NoSync();
 
-            Task runningTask = ExecuteTaskWithSemaphoreAsync(taskFactory);
+            Task runningTask = ExecuteTaskWithSemaphoreAsync(taskFactory, _semaphore, _logger);
             runningTasks.Add(runningTask);
         }
 
-        await Task.WhenAll(runningTasks)
-                  .NoSync();
+        // WaitAll with NoSync() to avoid capturing the sync context
+        await Task.WhenAll(runningTasks).NoSync();
     }
 
-    private async Task ExecuteTaskWithSemaphoreAsync(Func<Task> taskFactory)
+    private static async Task ExecuteTaskWithSemaphoreAsync(Func<Task> taskFactory, AsyncSemaphore semaphore, ILogger? logger)
     {
         try
         {
-            await taskFactory()
-                .ConfigureAwait(false);
+            await taskFactory().NoSync();
         }
         catch (Exception ex)
         {
-            _logger?.LogError(ex, "Error occurred while executing a task.");
+            logger?.LogError(ex, "Error occurred while executing a task.");
         }
         finally
         {
-            _semaphore.Release();
+            semaphore.Release();
         }
     }
 
-    public async ValueTask ExecuteWithRetry(List<Func<CancellationToken, ValueTask>> tasks, int maxRetries = 5, int initialDelayMs = 200, CancellationToken cancellationToken = default)
+    public async ValueTask ExecuteWithRetry(List<Func<CancellationToken, ValueTask>> tasks, int maxRetries = 5, int initialDelayMs = 200,
+        CancellationToken cancellationToken = default)
     {
         var runningTasks = new List<Task>(tasks.Count);
 
-        foreach (Func<CancellationToken, ValueTask> taskFunc in tasks)
+        for (var i = 0; i < tasks.Count; i++)
         {
-            await _semaphore.WaitAsync(cancellationToken)
-                            .NoSync();
+            Func<CancellationToken, ValueTask> taskFunc = tasks[i];
+            await _semaphore.WaitAsync(cancellationToken).NoSync();
 
-            // Start task execution immediately and track it
-            runningTasks.Add(ExecuteTaskWithRetryAsync(taskFunc, maxRetries, initialDelayMs, cancellationToken));
+            Task runningTask = ExecuteTaskWithRetryAsync(taskFunc, maxRetries, initialDelayMs, cancellationToken, _semaphore, _logger);
+            runningTasks.Add(runningTask);
         }
 
-        // Wait for all tasks concurrently
-        await Task.WhenAll(runningTasks)
-                  .NoSync();
+        await Task.WhenAll(runningTasks).NoSync();
     }
 
-    private async Task ExecuteTaskWithRetryAsync(Func<CancellationToken, ValueTask> taskFunc, int maxRetries, int initialDelayMs, CancellationToken cancellationToken)
+    private static async Task ExecuteTaskWithRetryAsync(Func<CancellationToken, ValueTask> taskFunc, int maxRetries, int initialDelayMs,
+        CancellationToken cancellationToken, AsyncSemaphore semaphore, ILogger? logger)
     {
         try
         {
-            await RetryWithBackoff(() => taskFunc(cancellationToken), maxRetries, initialDelayMs, cancellationToken)
-                .NoSync();
+            await RetryWithBackoffAsync(() => taskFunc(cancellationToken), maxRetries, initialDelayMs, cancellationToken, logger).NoSync();
         }
         finally
         {
-            _semaphore.Release(); // Ensure slot release
+            semaphore.Release();
         }
     }
 
-    private async ValueTask RetryWithBackoff(Func<ValueTask> operation, int maxRetries, int initialDelayMs, CancellationToken cancellationToken)
+    private static async ValueTask RetryWithBackoffAsync(Func<ValueTask> operation, int maxRetries, int initialDelayMs, CancellationToken cancellationToken,
+        ILogger? logger)
     {
         int delayMs = initialDelayMs;
 
@@ -98,26 +99,26 @@ public class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
 
             try
             {
-                await operation()
-                    .NoSync();
-                return; // Success
+                await operation().NoSync();
+                return;
             }
             catch (Exception ex) when (ex is TaskCanceledException or OperationCanceledException)
             {
-                throw; // Ensure proper cancellation handling
+                // Propagate cancellation
+                throw;
             }
             catch (Exception ex)
             {
-                int waitTime = delayMs + RandomUtil.Next(0, 100); // Add jitter
-                _logger?.LogWarning("Task failed (Attempt {Attempt}/{MaxRetries}). Retrying in {WaitTime}ms... Error: {Error}", attempt + 1, maxRetries, waitTime, ex.Message);
+                int waitTime = delayMs + RandomUtil.Next(0, 100);
+                logger?.LogWarning("Task failed (Attempt {Attempt}/{MaxRetries}). Retrying in {WaitTime}ms... Error: {Error}", attempt + 1, maxRetries,
+                    waitTime, ex.Message);
 
-                await Task.Delay(waitTime, cancellationToken)
-                          .NoSync();
-                delayMs *= 2; // Exponential backoff
+                await DelayUtil.Delay(waitTime, null, cancellationToken).NoSync();
+                delayMs *= 2;
             }
         }
 
-        _logger?.LogError("Exceeded max retry attempts.");
+        logger?.LogError("Exceeded max retry attempts.");
         throw new Exception("Exceeded max retry attempts.");
     }
 }
