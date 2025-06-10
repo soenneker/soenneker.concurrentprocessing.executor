@@ -46,7 +46,7 @@
         <PackageReference Include="Nito.AsyncEx" Version="5.1.2" />
         <PackageReference Include="Soenneker.Extensions.Task" Version="3.0.102" />
         <PackageReference Include="Soenneker.Extensions.ValueTask" Version="3.0.92" />
-        <PackageReference Include="Soenneker.Utils.Delay" Version="3.0.20" />
+        <PackageReference Include="Soenneker.Utils.Delay" Version="3.0.21" />
         <PackageReference Include="Soenneker.Utils.Random" Version="3.0.88" />
     </ItemGroup>
 </Project>
