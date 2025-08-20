@@ -27,7 +27,7 @@ public class ConcurrentProcessingExecutorTests : FixturedUnitTest
 
         var taskFactories = new List<Func<Task>>();
 
-        for (int i = 0; i < 10; i++)
+        for (var i = 0; i < 10; i++)
         {
             taskFactories.Add(async () =>
             {
@@ -51,7 +51,7 @@ public class ConcurrentProcessingExecutorTests : FixturedUnitTest
     public async Task ExecuteWithRetry_ShouldRetryFailedTasks()
     {
         // Arrange
-        int attemptCount = 0;
+        var attemptCount = 0;
         var tasks = new List<Func<CancellationToken, ValueTask>>
         {
             async (cancellationToken) =>
@@ -77,7 +77,7 @@ public class ConcurrentProcessingExecutorTests : FixturedUnitTest
     public async Task ExecuteWithRetry_ShouldFailAfterMaxRetries()
     {
         // Arrange
-        int attemptCount = 0;
+        var attemptCount = 0;
         var tasks = new List<Func<CancellationToken, ValueTask>>
         {
             async (cancellationToken) =>
@@ -93,7 +93,7 @@ public class ConcurrentProcessingExecutorTests : FixturedUnitTest
         // Assert
         await act.Should()
                  .ThrowAsync<Exception>()
-                 .WithMessage("Exceeded max retry attempts.");
+                 .WithMessage("Simulated failure");
         attemptCount.Should()
                     .Be(3); // Should attempt 3 times before failing
     }
