@@ -43,6 +43,6 @@
     <ItemGroup>
         <PackageReference Include="Soenneker.Extensions.Enumerable" Version="4.0.575" />
         <PackageReference Include="Soenneker.Extensions.ValueTask" Version="4.0.97" />
-        <PackageReference Include="Soenneker.Utils.Delay" Version="4.0.36" />
+        <PackageReference Include="Soenneker.Utils.Delay" Version="4.0.38" />
     </ItemGroup>
 </Project>
