@@ -3,7 +3,7 @@ using Soenneker.ConcurrentProcessing.Executor.Abstract;
 using Soenneker.Extensions.Enumerable;
 using Soenneker.Extensions.Task;
 using Soenneker.Extensions.ValueTask;
-using Soenneker.Utils.Delay; 
+using Soenneker.Utils.Delay;
 using Soenneker.Utils.Random;
 using System;
 using System.Buffers;
@@ -36,7 +36,7 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
 
         int workersCount = Math.Min(_maxConcurrency, taskFactories.Count);
         Task[] workers = ArrayPool<Task>.Shared.Rent(workersCount);
-        var counter = new IndexCounter {Value = -1};
+        var counter = new IndexCounter { Value = -1 };
 
         for (var w = 0; w < workersCount; w++)
         {
@@ -46,7 +46,8 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
         try
         {
             Span<Task> span = workers.AsSpan(0, workersCount);
-            await Task.WhenAll(span).NoSync();
+            await Task.WhenAll(span)
+                      .NoSync();
         }
         finally
         {
@@ -62,12 +63,13 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
 
             int i = Interlocked.Increment(ref counter.Value);
 
-            if ((uint) i >= (uint) taskFactories.Count)
+            if ((uint)i >= (uint)taskFactories.Count)
                 break;
 
             try
             {
-                await taskFactories[i]().NoSync();
+                await taskFactories[i]()
+                    .NoSync();
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -88,7 +90,7 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
 
         int workersCount = Math.Min(_maxConcurrency, tasks.Count);
         Task[] workers = ArrayPool<Task>.Shared.Rent(workersCount);
-        var counter = new IndexCounter {Value = -1};
+        var counter = new IndexCounter { Value = -1 };
 
         for (var w = 0; w < workersCount; w++)
         {
@@ -98,7 +100,8 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
         try
         {
             Span<Task> span = workers.AsSpan(0, workersCount);
-            await Task.WhenAll(span).NoSync();
+            await Task.WhenAll(span)
+                      .NoSync();
         }
         finally
         {
@@ -114,12 +117,13 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
             cancellationToken.ThrowIfCancellationRequested();
 
             int i = Interlocked.Increment(ref counter.Value);
-            if ((uint) i >= (uint) tasks.Count)
+            if ((uint)i >= (uint)tasks.Count)
                 break;
 
             try
             {
-                await RetryWithBackoff(() => tasks[i](cancellationToken), maxRetries, initialDelayMs, cancellationToken).NoSync();
+                await RetryWithBackoff(() => tasks[i](cancellationToken), maxRetries, initialDelayMs, cancellationToken)
+                    .NoSync();
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -151,7 +155,8 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
 
             try
             {
-                await operation().NoSync();
+                await operation()
+                    .NoSync();
                 return;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -167,10 +172,76 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
 
                 delay = Math.Min(delay << 1, maxDelayMs);
                 int jitter = RandomUtil.Next(0, delay + 1);
-                await DelayUtil.Delay(jitter, null, cancellationToken).NoSync();
+                await DelayUtil.Delay(jitter, null, cancellationToken)
+                               .NoSync();
             }
         }
 
-        ExceptionDispatchInfo.Capture(last!).Throw();
+        ExceptionDispatchInfo.Capture(last!)
+                             .Throw();
+    }
+
+    public async ValueTask Execute<TState>(IReadOnlyList<TState> states, Func<TState, CancellationToken, ValueTask> work,
+        CancellationToken cancellationToken = default)
+    {
+        if (states is null)
+            throw new ArgumentNullException(nameof(states));
+
+        if (work is null)
+            throw new ArgumentNullException(nameof(work));
+
+        if (states.Count == 0)
+            return;
+
+        int workersCount = Math.Min(_maxConcurrency, states.Count);
+        Task[] workers = ArrayPool<Task>.Shared.Rent(workersCount);
+        var counter = new IndexCounter { Value = -1 };
+
+        for (var w = 0; w < workersCount; w++)
+        {
+            workers[w] = Worker(states, work, counter, cancellationToken);
+        }
+
+        try
+        {
+            await Task.WhenAll(workers.AsSpan(0, workersCount))
+                      .NoSync();
+        }
+        finally
+        {
+            ArrayPool<Task>.Shared.Return(workers, clearArray: true);
+        }
+    }
+
+    private Task Worker<TState>(IReadOnlyList<TState> states, Func<TState, CancellationToken, ValueTask> work, IndexCounter counter,
+        CancellationToken cancellationToken)
+    {
+        // NOTE: This still allocates one closure per worker due to Task.Run + async lambda.
+        // That's fine: workersCount is small (<= maxConcurrency).
+        return Task.Run(async () =>
+        {
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                int i = Interlocked.Increment(ref counter.Value);
+                if ((uint)i >= (uint)states.Count)
+                    break;
+
+                try
+                {
+                    await work(states[i], cancellationToken)
+                        .NoSync();
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogError(ex, "Error occurred while executing task #{Index}.", i);
+                }
+            }
+        }, cancellationToken);
     }
 }
