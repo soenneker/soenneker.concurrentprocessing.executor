@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Logging;
+using Soenneker.Atomics.Ints;
 using Soenneker.ConcurrentProcessing.Executor.Abstract;
 using Soenneker.Extensions.Enumerable;
 using Soenneker.Extensions.Task;
@@ -11,7 +12,6 @@ using System.Collections.Generic;
 using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Threading.Tasks;
-using Soenneker.ConcurrentProcessing.Executor.Dtos;
 
 namespace Soenneker.ConcurrentProcessing.Executor;
 
@@ -24,7 +24,6 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
     public ConcurrentProcessingExecutor(int maxConcurrency, ILogger? logger = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(maxConcurrency, nameof(maxConcurrency));
-
         _maxConcurrency = maxConcurrency;
         _logger = logger;
     }
@@ -35,34 +34,34 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
             return;
 
         int workersCount = Math.Min(_maxConcurrency, taskFactories.Count);
+
         Task[] workers = ArrayPool<Task>.Shared.Rent(workersCount);
-        var counter = new IndexCounter { Value = -1 };
+
+        // Shared ref-type counter; initialize to -1 so first Increment() returns 0.
+        var counter = new AtomicInt(-1);
 
         for (var w = 0; w < workersCount; w++)
-        {
-            workers[w] = Worker(taskFactories, counter, cancellationToken);
-        }
+            workers[w] = WorkerCore(taskFactories, counter, cancellationToken, _logger);
 
         try
         {
-            Span<Task> span = workers.AsSpan(0, workersCount);
-            await Task.WhenAll(span)
+            await Task.WhenAll(workers.AsSpan(0, workersCount))
                       .NoSync();
         }
         finally
         {
-            ArrayPool<Task>.Shared.Return(workers, clearArray: true);
+            Array.Clear(workers, 0, workersCount);
+            ArrayPool<Task>.Shared.Return(workers, clearArray: false);
         }
     }
 
-    private Task Worker(List<Func<Task>> taskFactories, IndexCounter counter, CancellationToken cancellationToken) => Task.Run(async () =>
+    private static async Task WorkerCore(List<Func<Task>> taskFactories, AtomicInt counter, CancellationToken cancellationToken, ILogger? logger)
     {
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            int i = Interlocked.Increment(ref counter.Value);
-
+            int i = counter.Increment(); // must return incremented value
             if ((uint)i >= (uint)taskFactories.Count)
                 break;
 
@@ -77,10 +76,11 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Error occurred while executing task #{Index}.", i);
+                if (logger is not null)
+                    Log.LogWorkerError(logger, i, ex);
             }
         }
-    }, cancellationToken);
+    }
 
     public async ValueTask ExecuteWithRetry(List<Func<CancellationToken, ValueTask>> tasks, int maxRetries = 5, int initialDelayMs = 200,
         CancellationToken cancellationToken = default)
@@ -88,41 +88,47 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
         if (tasks.IsNullOrEmpty())
             return;
 
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxRetries, 1, nameof(maxRetries));
+        ArgumentOutOfRangeException.ThrowIfNegative(initialDelayMs, nameof(initialDelayMs));
+
         int workersCount = Math.Min(_maxConcurrency, tasks.Count);
+
         Task[] workers = ArrayPool<Task>.Shared.Rent(workersCount);
-        var counter = new IndexCounter { Value = -1 };
+
+        var counter = new AtomicInt(-1);
 
         for (var w = 0; w < workersCount; w++)
-        {
-            workers[w] = RetryWorker(tasks, counter, maxRetries, initialDelayMs, cancellationToken);
-        }
+            workers[w] = RetryWorkerCore(tasks, counter, maxRetries, initialDelayMs, cancellationToken, _logger);
 
         try
         {
-            Span<Task> span = workers.AsSpan(0, workersCount);
-            await Task.WhenAll(span)
+            await Task.WhenAll(workers.AsSpan(0, workersCount))
                       .NoSync();
         }
         finally
         {
-            ArrayPool<Task>.Shared.Return(workers, clearArray: true);
+            Array.Clear(workers, 0, workersCount);
+            ArrayPool<Task>.Shared.Return(workers, clearArray: false);
         }
     }
 
-    private Task RetryWorker(List<Func<CancellationToken, ValueTask>> tasks, IndexCounter counter, int maxRetries, int initialDelayMs,
-        CancellationToken cancellationToken) => Task.Run(async () =>
+    private static async Task RetryWorkerCore(List<Func<CancellationToken, ValueTask>> tasks, AtomicInt counter, int maxRetries, int initialDelayMs,
+        CancellationToken cancellationToken, ILogger? logger)
     {
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            int i = Interlocked.Increment(ref counter.Value);
+            int i = counter.Increment();
             if ((uint)i >= (uint)tasks.Count)
                 break;
 
             try
             {
-                await RetryWithBackoff(() => tasks[i](cancellationToken), maxRetries, initialDelayMs, cancellationToken)
+                // No closure: ValueTuple state + static delegate
+                (Func<CancellationToken, ValueTask> Task, CancellationToken Ct) opState = (Task: tasks[i], Ct: cancellationToken);
+
+                await RetryWithBackoff(static s => s.Task(s.Ct), opState, maxRetries, initialDelayMs, cancellationToken)
                     .NoSync();
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -131,54 +137,12 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Task #{Index} failed after {MaxRetries} retries.", i, maxRetries);
+                if (logger is not null)
+                    Log.LogRetryFailed(logger, i, maxRetries, ex);
+
                 throw;
             }
         }
-    }, cancellationToken);
-
-    private static async ValueTask RetryWithBackoff(Func<ValueTask> operation, int maxRetries, int initialDelayMs, CancellationToken cancellationToken,
-        int maxDelayMs = 30_000)
-    {
-        if (maxRetries < 1)
-            throw new ArgumentOutOfRangeException(nameof(maxRetries));
-
-        if (initialDelayMs < 0)
-            throw new ArgumentOutOfRangeException(nameof(initialDelayMs));
-
-        Exception? last = null;
-        int delay = Math.Max(initialDelayMs, 1);
-
-        for (var attempt = 1; attempt <= maxRetries; attempt++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            try
-            {
-                await operation()
-                    .NoSync();
-                return;
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                last = ex;
-
-                if (attempt == maxRetries)
-                    break;
-
-                delay = Math.Min(delay << 1, maxDelayMs);
-                int jitter = RandomUtil.Next(0, delay + 1);
-                await DelayUtil.Delay(jitter, null, cancellationToken)
-                               .NoSync();
-            }
-        }
-
-        ExceptionDispatchInfo.Capture(last!)
-                             .Throw();
     }
 
     public async ValueTask Execute<TState>(IReadOnlyList<TState> states, Func<TState, CancellationToken, ValueTask> work,
@@ -194,13 +158,13 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
             return;
 
         int workersCount = Math.Min(_maxConcurrency, states.Count);
+
         Task[] workers = ArrayPool<Task>.Shared.Rent(workersCount);
-        var counter = new IndexCounter { Value = -1 };
+
+        var counter = new AtomicInt(-1);
 
         for (var w = 0; w < workersCount; w++)
-        {
-            workers[w] = Worker(states, work, counter, cancellationToken);
-        }
+            workers[w] = GenericWorkerCore(states, work, counter, cancellationToken, _logger);
 
         try
         {
@@ -209,39 +173,84 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
         }
         finally
         {
-            ArrayPool<Task>.Shared.Return(workers, clearArray: true);
+            Array.Clear(workers, 0, workersCount);
+            ArrayPool<Task>.Shared.Return(workers, clearArray: false);
         }
     }
 
-    private Task Worker<TState>(IReadOnlyList<TState> states, Func<TState, CancellationToken, ValueTask> work, IndexCounter counter,
-        CancellationToken cancellationToken)
+    private static async Task GenericWorkerCore<TState>(IReadOnlyList<TState> states, Func<TState, CancellationToken, ValueTask> work, AtomicInt counter,
+        CancellationToken cancellationToken, ILogger? logger)
     {
-        // NOTE: This still allocates one closure per worker due to Task.Run + async lambda.
-        // That's fine: workersCount is small (<= maxConcurrency).
-        return Task.Run(async () =>
+        while (true)
         {
-            while (true)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
+            cancellationToken.ThrowIfCancellationRequested();
 
-                int i = Interlocked.Increment(ref counter.Value);
-                if ((uint)i >= (uint)states.Count)
+            int i = counter.Increment();
+            if ((uint)i >= (uint)states.Count)
+                break;
+
+            try
+            {
+                await work(states[i], cancellationToken)
+                    .NoSync();
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                if (logger is not null)
+                    Log.LogWorkerError(logger, i, ex);
+            }
+        }
+    }
+
+    private static async ValueTask RetryWithBackoff<TState>(Func<TState, ValueTask> operation, TState operationState, int maxRetries, int initialDelayMs,
+        CancellationToken cancellationToken, int maxDelayMs = 30_000)
+    {
+        if (maxRetries < 1)
+            throw new ArgumentOutOfRangeException(nameof(maxRetries));
+
+        if (initialDelayMs < 0)
+            throw new ArgumentOutOfRangeException(nameof(initialDelayMs));
+
+        Exception? last = null;
+
+        // Wait using the current delay value, then increase for the next failure.
+        int delay = Math.Max(initialDelayMs, 1);
+
+        for (var attempt = 1; attempt <= maxRetries; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                await operation(operationState)
+                    .NoSync();
+                return;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                last = ex;
+
+                if (attempt == maxRetries)
                     break;
 
-                try
-                {
-                    await work(states[i], cancellationToken)
-                        .NoSync();
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    _logger?.LogError(ex, "Error occurred while executing task #{Index}.", i);
-                }
+                int jitter = RandomUtil.Next(0, delay + 1);
+
+                await DelayUtil.Delay(jitter, null, cancellationToken)
+                               .NoSync();
+
+                delay = Math.Min(delay << 1, maxDelayMs);
             }
-        }, cancellationToken);
+        }
+
+        ExceptionDispatchInfo.Capture(last!)
+                             .Throw();
     }
 }
