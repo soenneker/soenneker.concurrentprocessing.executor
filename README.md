@@ -1,6 +1,7 @@
-﻿[![](https://img.shields.io/nuget/v/soenneker.concurrentprocessing.executor.svg?style=for-the-badge)](https://www.nuget.org/packages/soenneker.concurrentprocessing.executor/)
+[![](https://img.shields.io/nuget/v/soenneker.concurrentprocessing.executor.svg?style=for-the-badge)](https://www.nuget.org/packages/soenneker.concurrentprocessing.executor/)
 [![](https://img.shields.io/github/actions/workflow/status/soenneker/soenneker.concurrentprocessing.executor/publish-package.yml?style=for-the-badge)](https://github.com/soenneker/soenneker.concurrentprocessing.executor/actions/workflows/publish-package.yml)
 [![](https://img.shields.io/nuget/dt/soenneker.concurrentprocessing.executor.svg?style=for-the-badge)](https://www.nuget.org/packages/soenneker.concurrentprocessing.executor/)
+[![](https://img.shields.io/github/actions/workflow/status/soenneker/soenneker.concurrentprocessing.executor/codeql.yml?label=CodeQL&style=for-the-badge)](https://github.com/soenneker/soenneker.concurrentprocessing.executor/actions/workflows/codeql.yml)
 
 # ![](https://user-images.githubusercontent.com/4441470/224455560-91ed3ee7-f510-4041-a8d2-3fc093025112.png) Soenneker.ConcurrentProcessing.Executor
 
@@ -12,7 +13,7 @@ This executor efficiently handles multiple tasks with controlled concurrency. It
 - **Async Semaphore:** Uses a non-blocking semaphore to control concurrency and ensure thread safety.
 - **CancellationToken support** for task cancellation.
 
-⚠️ **Note:**
+?? **Note:**
 - This is not a background processor. It **only** manages concurrency for tasks that are provided during execution.
 
 ---
