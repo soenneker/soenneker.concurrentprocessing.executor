@@ -27,7 +27,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\..\src\Soenneker.ConcurrentProcessing.Executor.csproj" />
+        <ProjectReference Include="..\..\src\Soenneker.ConcurrentProcessing.Executor\Soenneker.ConcurrentProcessing.Executor.csproj" />
     </ItemGroup>
 
     <ItemGroup>
