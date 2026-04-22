@@ -1,24 +1,23 @@
-﻿using AwesomeAssertions;
-using Soenneker.Tests.FixturedUnit;
+using AwesomeAssertions;
+using Soenneker.Tests.HostedUnit;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Threading;
 using System;
-using Xunit;
 
 namespace Soenneker.ConcurrentProcessing.Executor.Tests;
 
-[Collection("Collection")]
-public class ConcurrentProcessingExecutorTests : FixturedUnitTest
+[ClassDataSource<Host>(Shared = SharedType.PerTestSession)]
+public class ConcurrentProcessingExecutorTests : HostedUnitTest
 {
     private readonly ConcurrentProcessingExecutor _executor;
 
-    public ConcurrentProcessingExecutorTests(Fixture fixture, ITestOutputHelper output) : base(fixture, output)
+    public ConcurrentProcessingExecutorTests(Host host) : base(host)
     {
         _executor = new ConcurrentProcessingExecutor(maxConcurrency: 3, Logger); // Limiting concurrency to 3
     }
 
-    [Fact]
+    [Test]
     public async Task Execute_ShouldRunAllTasks_WithinConcurrencyLimit()
     {
         // Arrange
@@ -47,7 +46,7 @@ public class ConcurrentProcessingExecutorTests : FixturedUnitTest
                               .BeLessThanOrEqualTo(3);
     }
 
-    [Fact]
+    [Test]
     public async Task ExecuteWithRetry_ShouldRetryFailedTasks()
     {
         // Arrange
@@ -73,7 +72,7 @@ public class ConcurrentProcessingExecutorTests : FixturedUnitTest
                     .Be(3); // Task should have retried twice before succeeding
     }
 
-    [Fact]
+    [Test]
     public async Task ExecuteWithRetry_ShouldFailAfterMaxRetries()
     {
         // Arrange
@@ -98,7 +97,7 @@ public class ConcurrentProcessingExecutorTests : FixturedUnitTest
                     .Be(3); // Should attempt 3 times before failing
     }
 
-    [Fact]
+    [Test]
     public async Task ExecuteWithRetry_ShouldRespectCancellationToken()
     {
         // Arrange
@@ -116,7 +115,7 @@ public class ConcurrentProcessingExecutorTests : FixturedUnitTest
                  .ThrowAsync<TaskCanceledException>();
     }
 
-    [Fact]
+    [Test]
     public async Task Execute_ShouldHandleTaskFailuresWithoutCrashing()
     {
         // Arrange
