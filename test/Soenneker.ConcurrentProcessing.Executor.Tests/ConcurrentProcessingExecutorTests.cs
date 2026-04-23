@@ -39,7 +39,7 @@ public class ConcurrentProcessingExecutorTests : HostedUnitTest
         }
 
         // Act
-        await _executor.Execute(taskFactories, cancellationToken: CancellationToken);
+        await _executor.Execute(taskFactories, cancellationToken: System.Threading.CancellationToken.None);
 
         // Assert
         maxObservedConcurrency.Should()
