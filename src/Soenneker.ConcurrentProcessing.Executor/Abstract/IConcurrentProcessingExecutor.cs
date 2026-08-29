@@ -43,24 +43,11 @@ public interface IConcurrentProcessingExecutor
     /// Executes a collection of asynchronous operations concurrently with retry support,
     /// bounded by the executor's maximum concurrency level.
     /// </summary>
-    /// <param name="tasks">
-    /// A list of functions that execute a unit of work and accept a <see cref="CancellationToken"/>.
-    /// Each function will be executed at most once, with retries applied on failure.
-    /// </param>
-    /// <param name="maxRetries">
-    /// The maximum number of retry attempts per task before the exception is rethrown.
-    /// </param>
-    /// <param name="initialDelayMs">
-    /// The initial delay (in milliseconds) before the first retry attempt.
-    /// Subsequent retries use exponential backoff with jitter.
-    /// </param>
-    /// <param name="cancellationToken">
-    /// A token used to signal cancellation of the operation.
-    /// </param>
-    /// <returns>
-    /// A <see cref="ValueTask"/> that completes when all tasks have either succeeded
-    /// or exhausted their retry attempts.
-    /// </returns>
+    /// <param name="tasks">A list of functions that execute a unit of work and accept a <see cref="CancellationToken"/>. Each function will be executed at most once, with retries applied on failure.</param>
+    /// <param name="maxRetries">The maximum number of retry attempts per task before the exception is rethrown.</param>
+    /// <param name="initialDelayMs">The initial delay (in milliseconds) before the first retry attempt. Subsequent retries use exponential backoff with jitter.</param>
+    /// <param name="cancellationToken">A token used to signal cancellation of the operation.</param>
+    /// <returns>A <see cref="ValueTask"/> that completes when all tasks have either succeeded or exhausted their retry attempts.</returns>
     ValueTask ExecuteWithRetry(List<Func<CancellationToken, ValueTask>> tasks, int maxRetries = 5, int initialDelayMs = 200,
         CancellationToken cancellationToken = default);
 
