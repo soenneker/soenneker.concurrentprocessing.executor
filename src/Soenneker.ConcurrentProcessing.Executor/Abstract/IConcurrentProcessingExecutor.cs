@@ -36,6 +36,8 @@ public interface IConcurrentProcessingExecutor
     /// <remarks>
     /// This overload requires creating one delegate per work item and may allocate closures
     /// at the call site. Prefer the state-based overload when minimizing allocations is important.
+    /// Work-item failures do not stop other queued items; they are thrown together as an <see cref="AggregateException"/> after the batch finishes.
+    /// Cancellation prevents additional items from starting but cannot cancel a factory that does not observe the token independently.
     /// </remarks>
     ValueTask Execute(List<Func<Task>> taskFactories, CancellationToken cancellationToken = default);
 
@@ -43,8 +45,8 @@ public interface IConcurrentProcessingExecutor
     /// Executes a collection of asynchronous operations concurrently with retry support,
     /// bounded by the executor's maximum concurrency level.
     /// </summary>
-    /// <param name="tasks">A list of functions that execute a unit of work and accept a <see cref="CancellationToken"/>. Each function will be executed at most once, with retries applied on failure.</param>
-    /// <param name="maxRetries">The maximum number of retry attempts per task before the exception is rethrown.</param>
+    /// <param name="tasks">A list of functions that execute a unit of work and accept a <see cref="CancellationToken"/>.</param>
+    /// <param name="maxRetries">The maximum total number of attempts per task, including the first attempt.</param>
     /// <param name="initialDelayMs">The initial delay (in milliseconds) before the first retry attempt. Subsequent retries use exponential backoff with jitter.</param>
     /// <param name="cancellationToken">A token used to signal cancellation of the operation.</param>
     /// <returns>A <see cref="ValueTask"/> that completes when all tasks have either succeeded or exhausted their retry attempts.</returns>
@@ -74,6 +76,7 @@ public interface IConcurrentProcessingExecutor
     /// <remarks>
     /// This overload is the preferred execution model for high-performance scenarios.
     /// It avoids per-item closure allocations by passing all required data via <typeparamref name="TState"/>.
+    /// Work-item failures do not stop other queued items; they are thrown together as an <see cref="AggregateException"/> after the batch finishes.
     /// </remarks>
     ValueTask Execute<TState>(IReadOnlyList<TState> states, Func<TState, CancellationToken, ValueTask> work, CancellationToken cancellationToken = default);
 }

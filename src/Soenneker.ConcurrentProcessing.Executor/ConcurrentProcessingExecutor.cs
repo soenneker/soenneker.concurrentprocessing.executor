@@ -8,6 +8,7 @@ using Soenneker.Utils.Delay;
 using Soenneker.Utils.Random;
 using System;
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Runtime.ExceptionServices;
 using System.Threading;
@@ -23,7 +24,7 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
 
     public ConcurrentProcessingExecutor(int maxConcurrency, ILogger? logger = null)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(maxConcurrency, nameof(maxConcurrency));
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxConcurrency, 1, nameof(maxConcurrency));
         _maxConcurrency = maxConcurrency;
         _logger = logger;
     }
@@ -39,14 +40,18 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
 
         // Shared ref-type counter; initialize to -1 so first Increment() returns 0.
         var counter = new AtomicInt(-1);
+        var errors = new ConcurrentQueue<Exception>();
 
         for (var w = 0; w < workersCount; w++)
-            workers[w] = WorkerCore(taskFactories, counter, cancellationToken, _logger);
+            workers[w] = WorkerCore(taskFactories, counter, errors, cancellationToken, _logger);
 
         try
         {
             await Task.WhenAll(workers.AsSpan(0, workersCount))
                       .NoSync();
+
+            if (!errors.IsEmpty)
+                throw new AggregateException(errors);
         }
         finally
         {
@@ -55,7 +60,8 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
         }
     }
 
-    private static async Task WorkerCore(List<Func<Task>> taskFactories, AtomicInt counter, CancellationToken cancellationToken, ILogger? logger)
+    private static async Task WorkerCore(List<Func<Task>> taskFactories, AtomicInt counter, ConcurrentQueue<Exception> errors,
+        CancellationToken cancellationToken, ILogger? logger)
     {
         while (true)
         {
@@ -78,6 +84,8 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
             {
                 if (logger is not null)
                     Log.LogWorkerError(logger, i, ex);
+
+                errors.Enqueue(ex);
             }
         }
     }
@@ -162,14 +170,18 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
         Task[] workers = ArrayPool<Task>.Shared.Rent(workersCount);
 
         var counter = new AtomicInt(-1);
+        var errors = new ConcurrentQueue<Exception>();
 
         for (var w = 0; w < workersCount; w++)
-            workers[w] = GenericWorkerCore(states, work, counter, cancellationToken, _logger);
+            workers[w] = GenericWorkerCore(states, work, counter, errors, cancellationToken, _logger);
 
         try
         {
             await Task.WhenAll(workers.AsSpan(0, workersCount))
                       .NoSync();
+
+            if (!errors.IsEmpty)
+                throw new AggregateException(errors);
         }
         finally
         {
@@ -179,7 +191,7 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
     }
 
     private static async Task GenericWorkerCore<TState>(IReadOnlyList<TState> states, Func<TState, CancellationToken, ValueTask> work, AtomicInt counter,
-        CancellationToken cancellationToken, ILogger? logger)
+        ConcurrentQueue<Exception> errors, CancellationToken cancellationToken, ILogger? logger)
     {
         while (true)
         {
@@ -202,6 +214,8 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
             {
                 if (logger is not null)
                     Log.LogWorkerError(logger, i, ex);
+
+                errors.Enqueue(ex);
             }
         }
     }
@@ -209,16 +223,10 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
     private static async ValueTask RetryWithBackoff<TState>(Func<TState, ValueTask> operation, TState operationState, int maxRetries, int initialDelayMs,
         CancellationToken cancellationToken, int maxDelayMs = 30_000)
     {
-        if (maxRetries < 1)
-            throw new ArgumentOutOfRangeException(nameof(maxRetries));
-
-        if (initialDelayMs < 0)
-            throw new ArgumentOutOfRangeException(nameof(initialDelayMs));
-
         Exception? last = null;
 
         // Wait using the current delay value, then increase for the next failure.
-        int delay = Math.Max(initialDelayMs, 1);
+        int delay = Math.Clamp(initialDelayMs, 1, maxDelayMs);
 
         for (var attempt = 1; attempt <= maxRetries; attempt++)
         {
