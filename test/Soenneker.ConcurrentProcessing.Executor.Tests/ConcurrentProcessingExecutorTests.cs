@@ -18,7 +18,7 @@ public class ConcurrentProcessingExecutorTests : HostedUnitTest
     }
 
     [Test]
-    public async Task Execute_ShouldRunAllTasks_WithinConcurrencyLimit()
+    public async Task Execute_ShouldRunAllTasks_WithinConcurrencyLimit(CancellationToken cancellationToken)
     {
         // Arrange
         var concurrentCounter = 0;
@@ -39,7 +39,7 @@ public class ConcurrentProcessingExecutorTests : HostedUnitTest
         }
 
         // Act
-        await _executor.Execute(taskFactories, cancellationToken: System.Threading.CancellationToken.None);
+        await _executor.Execute(taskFactories, cancellationToken: cancellationToken);
 
         // Assert
         maxObservedConcurrency.Should()
@@ -47,7 +47,7 @@ public class ConcurrentProcessingExecutorTests : HostedUnitTest
     }
 
     [Test]
-    public async Task ExecuteWithRetry_ShouldRetryFailedTasks()
+    public async Task ExecuteWithRetry_ShouldRetryFailedTasks(CancellationToken cancellationToken)
     {
         // Arrange
         var attemptCount = 0;
@@ -63,7 +63,7 @@ public class ConcurrentProcessingExecutorTests : HostedUnitTest
         };
 
         // Act
-        Func<Task> act = async () => await _executor.ExecuteWithRetry(tasks, maxRetries: 5, initialDelayMs: 50);
+        Func<Task> act = async () => await _executor.ExecuteWithRetry(tasks, maxRetries: 5, initialDelayMs: 50, cancellationToken: cancellationToken);
 
         // Assert
         await act.Should()
@@ -73,7 +73,7 @@ public class ConcurrentProcessingExecutorTests : HostedUnitTest
     }
 
     [Test]
-    public async Task ExecuteWithRetry_ShouldFailAfterMaxRetries()
+    public async Task ExecuteWithRetry_ShouldFailAfterMaxRetries(CancellationToken cancellationToken)
     {
         // Arrange
         var attemptCount = 0;
@@ -87,7 +87,7 @@ public class ConcurrentProcessingExecutorTests : HostedUnitTest
         };
 
         // Act
-        Func<Task> act = async () => await _executor.ExecuteWithRetry(tasks, maxRetries: 3, initialDelayMs: 50);
+        Func<Task> act = async () => await _executor.ExecuteWithRetry(tasks, maxRetries: 3, initialDelayMs: 50, cancellationToken: cancellationToken);
 
         // Assert
         await act.Should()
@@ -116,7 +116,7 @@ public class ConcurrentProcessingExecutorTests : HostedUnitTest
     }
 
     [Test]
-    public async Task Execute_ShouldHandleTaskFailuresWithoutCrashing()
+    public async Task Execute_ShouldHandleTaskFailuresWithoutCrashing(CancellationToken cancellationToken)
     {
         // Arrange
         var tasks = new List<Func<Task>>
@@ -126,7 +126,7 @@ public class ConcurrentProcessingExecutorTests : HostedUnitTest
         };
 
         // Act
-        Func<Task> act = async () => await _executor.Execute(tasks);
+        Func<Task> act = async () => await _executor.Execute(tasks, cancellationToken: cancellationToken);
 
         // Assert
         await act.Should()
