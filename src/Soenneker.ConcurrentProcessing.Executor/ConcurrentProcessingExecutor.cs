@@ -104,14 +104,18 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
         Task[] workers = ArrayPool<Task>.Shared.Rent(workersCount);
 
         var counter = new AtomicInt(-1);
+        var errors = new ConcurrentQueue<Exception>();
 
         for (var w = 0; w < workersCount; w++)
-            workers[w] = RetryWorkerCore(tasks, counter, maxRetries, initialDelayMs, cancellationToken, _logger);
+            workers[w] = RetryWorkerCore(tasks, counter, errors, maxRetries, initialDelayMs, cancellationToken, _logger);
 
         try
         {
             await Task.WhenAll(workers.AsSpan(0, workersCount))
                       .NoSync();
+
+            if (!errors.IsEmpty)
+                throw new AggregateException(errors);
         }
         finally
         {
@@ -120,8 +124,8 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
         }
     }
 
-    private static async Task RetryWorkerCore(List<Func<CancellationToken, ValueTask>> tasks, AtomicInt counter, int maxRetries, int initialDelayMs,
-        CancellationToken cancellationToken, ILogger? logger)
+    private static async Task RetryWorkerCore(List<Func<CancellationToken, ValueTask>> tasks, AtomicInt counter, ConcurrentQueue<Exception> errors,
+        int maxRetries, int initialDelayMs, CancellationToken cancellationToken, ILogger? logger)
     {
         while (true)
         {
@@ -148,7 +152,7 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
                 if (logger is not null)
                     Log.LogRetryFailed(logger, i, maxRetries, ex);
 
-                throw;
+                errors.Enqueue(ex);
             }
         }
     }

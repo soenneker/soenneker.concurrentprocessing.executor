@@ -77,24 +77,39 @@ public class ConcurrentProcessingExecutorTests : HostedUnitTest
     {
         // Arrange
         var attemptCount = 0;
+        var completedCount = 0;
+        var executor = new ConcurrentProcessingExecutor(maxConcurrency: 1, Logger);
         var tasks = new List<Func<CancellationToken, ValueTask>>
         {
             async (cancellationToken) =>
             {
                 attemptCount++;
-                throw new Exception("Simulated failure");
+                throw new InvalidOperationException("Simulated failure");
+            },
+            (cancellationToken) =>
+            {
+                completedCount++;
+                return ValueTask.CompletedTask;
             }
         };
 
         // Act
-        Func<Task> act = async () => await _executor.ExecuteWithRetry(tasks, maxRetries: 3, initialDelayMs: 50, cancellationToken: cancellationToken);
+        Func<Task> act = async () => await executor.ExecuteWithRetry(tasks, maxRetries: 3, initialDelayMs: 50, cancellationToken: cancellationToken);
 
         // Assert
-        await act.Should()
-                 .ThrowAsync<Exception>()
-                 .WithMessage("Simulated failure");
+        var assertion = await act.Should()
+                                 .ThrowAsync<AggregateException>();
+
+        assertion.Which.InnerExceptions.Should()
+                 .ContainSingle()
+                 .Which.Should()
+                 .BeOfType<InvalidOperationException>()
+                 .Which.Message.Should()
+                 .Be("Simulated failure");
+
         attemptCount.Should()
                     .Be(3); // Should attempt 3 times before failing
+        completedCount.Should().Be(1);
     }
 
     [Test]
@@ -116,20 +131,34 @@ public class ConcurrentProcessingExecutorTests : HostedUnitTest
     }
 
     [Test]
-    public async Task Execute_ShouldHandleTaskFailuresWithoutCrashing(CancellationToken cancellationToken)
+    public async Task Execute_ShouldAggregateFailuresAfterCompletingRemainingTasks(CancellationToken cancellationToken)
     {
         // Arrange
+        var completedCount = 0;
         var tasks = new List<Func<Task>>
         {
-            async () => throw new Exception("Simulated failure"), // Exception thrown within execution
-            async () => await Task.CompletedTask
+            async () => throw new InvalidOperationException("Simulated failure"),
+            () =>
+            {
+                Interlocked.Increment(ref completedCount);
+                return Task.CompletedTask;
+            }
         };
 
         // Act
         Func<Task> act = async () => await _executor.Execute(tasks, cancellationToken: cancellationToken);
 
         // Assert
-        await act.Should()
-                 .NotThrowAsync();
+        var assertion = await act.Should()
+                                 .ThrowAsync<AggregateException>();
+
+        assertion.Which.InnerExceptions.Should()
+                 .ContainSingle()
+                 .Which.Should()
+                 .BeOfType<InvalidOperationException>()
+                 .Which.Message.Should()
+                 .Be("Simulated failure");
+
+        completedCount.Should().Be(1);
     }
 }

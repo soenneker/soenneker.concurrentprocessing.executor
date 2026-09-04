@@ -50,6 +50,10 @@ public interface IConcurrentProcessingExecutor
     /// <param name="initialDelayMs">The initial delay (in milliseconds) before the first retry attempt. Subsequent retries use exponential backoff with jitter.</param>
     /// <param name="cancellationToken">A token used to signal cancellation of the operation.</param>
     /// <returns>A <see cref="ValueTask"/> that completes when all tasks have either succeeded or exhausted their retry attempts.</returns>
+    /// <remarks>
+    /// A task that exhausts its attempts does not stop other queued tasks. Exhausted failures are thrown together as an
+    /// <see cref="AggregateException"/> after the batch finishes.
+    /// </remarks>
     ValueTask ExecuteWithRetry(List<Func<CancellationToken, ValueTask>> tasks, int maxRetries = 5, int initialDelayMs = 200,
         CancellationToken cancellationToken = default);
 

@@ -61,7 +61,7 @@ await executor.ExecuteWithRetry(
     cancellationToken);
 ```
 
-`maxRetries` is the total attempt count, including the first call. Delays use exponential backoff with full jitter and are capped at 30 seconds. After an item exhausts its attempts, its original exception is rethrown; cancellation is never retried.
+`maxRetries` is the total attempt count, including the first call. Delays use exponential backoff with full jitter and are capped at 30 seconds. An item that exhausts its attempts does not prevent later items from running. Exhausted failures are collected and thrown as an `AggregateException` after the batch; cancellation is never retried.
 
 ## Operational notes
 
