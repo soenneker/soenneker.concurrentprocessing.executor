@@ -1,5 +1,4 @@
 ﻿using Microsoft.Extensions.Logging;
-using Soenneker.Atomics.Ints;
 using Soenneker.ConcurrentProcessing.Executor.Abstract;
 using Soenneker.Extensions.Enumerable;
 using Soenneker.Extensions.Task;
@@ -39,18 +38,17 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
         Task[] workers = ArrayPool<Task>.Shared.Rent(workersCount);
 
         // Shared ref-type counter; initialize to -1 so first Increment() returns 0.
-        var counter = new AtomicInt(-1);
-        var errors = new ConcurrentQueue<Exception>();
+        var state = new WorkerState();
 
         for (var w = 0; w < workersCount; w++)
-            workers[w] = WorkerCore(taskFactories, counter, errors, cancellationToken, _logger);
+            workers[w] = WorkerCore(taskFactories, state, cancellationToken, _logger);
 
         try
         {
             await Task.WhenAll(workers.AsSpan(0, workersCount))
                       .NoSync();
 
-            if (!errors.IsEmpty)
+            if (state.Errors is { IsEmpty: false } errors)
                 throw new AggregateException(errors);
         }
         finally
@@ -60,14 +58,14 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
         }
     }
 
-    private static async Task WorkerCore(List<Func<Task>> taskFactories, AtomicInt counter, ConcurrentQueue<Exception> errors,
+    private static async Task WorkerCore(List<Func<Task>> taskFactories, WorkerState state,
         CancellationToken cancellationToken, ILogger? logger)
     {
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            int i = counter.Increment(); // must return incremented value
+            int i = Interlocked.Increment(ref state.Index); // must return incremented value
             if ((uint)i >= (uint)taskFactories.Count)
                 break;
 
@@ -85,7 +83,7 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
                 if (logger is not null)
                     Log.LogWorkerError(logger, i, ex);
 
-                errors.Enqueue(ex);
+                state.AddError(ex);
             }
         }
     }
@@ -103,18 +101,17 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
 
         Task[] workers = ArrayPool<Task>.Shared.Rent(workersCount);
 
-        var counter = new AtomicInt(-1);
-        var errors = new ConcurrentQueue<Exception>();
+        var state = new WorkerState();
 
         for (var w = 0; w < workersCount; w++)
-            workers[w] = RetryWorkerCore(tasks, counter, errors, maxRetries, initialDelayMs, cancellationToken, _logger);
+            workers[w] = RetryWorkerCore(tasks, state, maxRetries, initialDelayMs, cancellationToken, _logger);
 
         try
         {
             await Task.WhenAll(workers.AsSpan(0, workersCount))
                       .NoSync();
 
-            if (!errors.IsEmpty)
+            if (state.Errors is { IsEmpty: false } errors)
                 throw new AggregateException(errors);
         }
         finally
@@ -124,14 +121,14 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
         }
     }
 
-    private static async Task RetryWorkerCore(List<Func<CancellationToken, ValueTask>> tasks, AtomicInt counter, ConcurrentQueue<Exception> errors,
+    private static async Task RetryWorkerCore(List<Func<CancellationToken, ValueTask>> tasks, WorkerState state,
         int maxRetries, int initialDelayMs, CancellationToken cancellationToken, ILogger? logger)
     {
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            int i = counter.Increment();
+            int i = Interlocked.Increment(ref state.Index);
             if ((uint)i >= (uint)tasks.Count)
                 break;
 
@@ -152,7 +149,7 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
                 if (logger is not null)
                     Log.LogRetryFailed(logger, i, maxRetries, ex);
 
-                errors.Enqueue(ex);
+                state.AddError(ex);
             }
         }
     }
@@ -173,18 +170,17 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
 
         Task[] workers = ArrayPool<Task>.Shared.Rent(workersCount);
 
-        var counter = new AtomicInt(-1);
-        var errors = new ConcurrentQueue<Exception>();
+        var state = new WorkerState();
 
         for (var w = 0; w < workersCount; w++)
-            workers[w] = GenericWorkerCore(states, work, counter, errors, cancellationToken, _logger);
+            workers[w] = GenericWorkerCore(states, work, state, cancellationToken, _logger);
 
         try
         {
             await Task.WhenAll(workers.AsSpan(0, workersCount))
                       .NoSync();
 
-            if (!errors.IsEmpty)
+            if (state.Errors is { IsEmpty: false } errors)
                 throw new AggregateException(errors);
         }
         finally
@@ -194,14 +190,14 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
         }
     }
 
-    private static async Task GenericWorkerCore<TState>(IReadOnlyList<TState> states, Func<TState, CancellationToken, ValueTask> work, AtomicInt counter,
-        ConcurrentQueue<Exception> errors, CancellationToken cancellationToken, ILogger? logger)
+    private static async Task GenericWorkerCore<TState>(IReadOnlyList<TState> states, Func<TState, CancellationToken, ValueTask> work, WorkerState state,
+        CancellationToken cancellationToken, ILogger? logger)
     {
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            int i = counter.Increment();
+            int i = Interlocked.Increment(ref state.Index);
             if ((uint)i >= (uint)states.Count)
                 break;
 
@@ -219,8 +215,26 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
                 if (logger is not null)
                     Log.LogWorkerError(logger, i, ex);
 
-                errors.Enqueue(ex);
+                state.AddError(ex);
             }
+        }
+    }
+
+    private sealed class WorkerState
+    {
+        internal int Index = -1;
+        internal ConcurrentQueue<Exception>? Errors;
+
+        internal void AddError(Exception error)
+        {
+            ConcurrentQueue<Exception>? errors = Volatile.Read(ref Errors);
+            if (errors is null)
+            {
+                lock (this)
+                    errors = Errors ??= new ConcurrentQueue<Exception>();
+            }
+
+            errors.Enqueue(error);
         }
     }
 
