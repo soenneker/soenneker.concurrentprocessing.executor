@@ -15,7 +15,6 @@ using System.Threading.Tasks;
 
 namespace Soenneker.ConcurrentProcessing.Executor;
 
-/// <inheritdoc cref="IConcurrentProcessingExecutor"/>
 public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
 {
     private readonly int _maxConcurrency;
@@ -167,6 +166,11 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
             return;
 
         int workersCount = Math.Min(_maxConcurrency, states.Count);
+        if (workersCount == 1)
+        {
+            await ExecuteSequential(states, work, cancellationToken).NoSync();
+            return;
+        }
 
         Task[] workers = ArrayPool<Task>.Shared.Rent(workersCount);
 
@@ -188,6 +192,35 @@ public sealed class ConcurrentProcessingExecutor : IConcurrentProcessingExecutor
             Array.Clear(workers, 0, workersCount);
             ArrayPool<Task>.Shared.Return(workers, clearArray: false);
         }
+    }
+
+    private async ValueTask ExecuteSequential<TState>(IReadOnlyList<TState> states,
+        Func<TState, CancellationToken, ValueTask> work, CancellationToken cancellationToken)
+    {
+        List<Exception>? errors = null;
+        for (int i = 0; i < states.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                await work(states[i], cancellationToken).NoSync();
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                if (_logger is not null)
+                    Log.LogWorkerError(_logger, i, ex);
+                (errors ??= new List<Exception>()).Add(ex);
+            }
+        }
+
+        // Match the worker loop's cancellation check after the final item.
+        cancellationToken.ThrowIfCancellationRequested();
+        if (errors is not null)
+            throw new AggregateException(errors);
     }
 
     private static async Task GenericWorkerCore<TState>(IReadOnlyList<TState> states, Func<TState, CancellationToken, ValueTask> work, WorkerState state,
