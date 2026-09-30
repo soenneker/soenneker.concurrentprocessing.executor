@@ -9,7 +9,7 @@ namespace Soenneker.ConcurrentProcessing.Executor.Tests;
 public class SequentialRegressionTests
 {
     [Test]
-    public async Task SequentialFailuresAreAggregatedAfterRemainingItems()
+    public async ValueTask SequentialFailuresAreAggregatedAfterRemainingItems()
     {
         var seen = new List<int>();
         var executor = new ConcurrentProcessingExecutor(1);
@@ -25,7 +25,7 @@ public class SequentialRegressionTests
     }
 
     [Test]
-    public async Task CancellationAfterFinalItemIsObserved()
+    public async ValueTask CancellationAfterFinalItemIsObserved()
     {
         using var cts = new CancellationTokenSource();
         var executor = new ConcurrentProcessingExecutor(8);
@@ -38,7 +38,7 @@ public class SequentialRegressionTests
     }
 
     [Test]
-    public async Task SynchronousWorkCompletesWithoutSchedulingTasks()
+    public async ValueTask SynchronousWorkCompletesWithoutSchedulingTasks()
     {
         var executor = new ConcurrentProcessingExecutor(1);
         int seen = 0;

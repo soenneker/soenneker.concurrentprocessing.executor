@@ -18,7 +18,7 @@ public class ConcurrentProcessingExecutorTests : HostedUnitTest
     }
 
     [Test]
-    public async Task Execute_ShouldRunAllTasks_WithinConcurrencyLimit(CancellationToken cancellationToken)
+    public async ValueTask Execute_ShouldRunAllTasks_WithinConcurrencyLimit(CancellationToken cancellationToken)
     {
         // Arrange
         var concurrentCounter = 0;
@@ -47,7 +47,7 @@ public class ConcurrentProcessingExecutorTests : HostedUnitTest
     }
 
     [Test]
-    public async Task ExecuteWithRetry_ShouldRetryFailedTasks(CancellationToken cancellationToken)
+    public async ValueTask ExecuteWithRetry_ShouldRetryFailedTasks(CancellationToken cancellationToken)
     {
         // Arrange
         var attemptCount = 0;
@@ -73,7 +73,7 @@ public class ConcurrentProcessingExecutorTests : HostedUnitTest
     }
 
     [Test]
-    public async Task ExecuteWithRetry_ShouldFailAfterMaxRetries(CancellationToken cancellationToken)
+    public async ValueTask ExecuteWithRetry_ShouldFailAfterMaxRetries(CancellationToken cancellationToken)
     {
         // Arrange
         var attemptCount = 0;
@@ -113,7 +113,7 @@ public class ConcurrentProcessingExecutorTests : HostedUnitTest
     }
 
     [Test]
-    public async Task ExecuteWithRetry_ShouldRespectCancellationToken()
+    public async ValueTask ExecuteWithRetry_ShouldRespectCancellationToken()
     {
         // Arrange
         using var cts = new CancellationTokenSource(100); // Cancel after 100ms
@@ -131,7 +131,7 @@ public class ConcurrentProcessingExecutorTests : HostedUnitTest
     }
 
     [Test]
-    public async Task Execute_ShouldAggregateFailuresAfterCompletingRemainingTasks(CancellationToken cancellationToken)
+    public async ValueTask Execute_ShouldAggregateFailuresAfterCompletingRemainingTasks(CancellationToken cancellationToken)
     {
         // Arrange
         var completedCount = 0;
