@@ -33,7 +33,7 @@ public class ConcurrentProcessingExecutorTests : HostedUnitTest
                 int current = Interlocked.Increment(ref concurrentCounter);
                 maxObservedConcurrency = Math.Max(maxObservedConcurrency, current);
 
-                await Task.Delay(200);
+                await Task.Delay(200, cancellationToken: cancellationToken);
                 Interlocked.Decrement(ref concurrentCounter);
             });
         }
@@ -113,7 +113,7 @@ public class ConcurrentProcessingExecutorTests : HostedUnitTest
     }
 
     [Test]
-    public async ValueTask ExecuteWithRetry_ShouldRespectCancellationToken()
+    public async ValueTask ExecuteWithRetry_ShouldRespectCancellationToken(CancellationToken cancellationToken)
     {
         // Arrange
         using var cts = new CancellationTokenSource(100); // Cancel after 100ms

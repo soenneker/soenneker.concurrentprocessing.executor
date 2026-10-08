@@ -9,7 +9,7 @@ namespace Soenneker.ConcurrentProcessing.Executor.Tests;
 public class SequentialRegressionTests
 {
     [Test]
-    public async ValueTask SequentialFailuresAreAggregatedAfterRemainingItems()
+    public async ValueTask SequentialFailuresAreAggregatedAfterRemainingItems(CancellationToken cancellationToken)
     {
         var seen = new List<int>();
         var executor = new ConcurrentProcessingExecutor(1);
@@ -18,14 +18,14 @@ public class SequentialRegressionTests
             await Task.Yield();
             seen.Add(i);
             if (i % 2 == 0) throw new InvalidOperationException(i.ToString());
-        });
+        }, cancellationToken: cancellationToken);
         var failure = await run.Should().ThrowAsync<AggregateException>();
         failure.Which.InnerExceptions.Count.Should().Be(2);
         seen.Should().Equal(0, 1, 2, 3);
     }
 
     [Test]
-    public async ValueTask CancellationAfterFinalItemIsObserved()
+    public async ValueTask CancellationAfterFinalItemIsObserved(CancellationToken cancellationToken)
     {
         using var cts = new CancellationTokenSource();
         var executor = new ConcurrentProcessingExecutor(8);
@@ -38,11 +38,11 @@ public class SequentialRegressionTests
     }
 
     [Test]
-    public async ValueTask SynchronousWorkCompletesWithoutSchedulingTasks()
+    public async ValueTask SynchronousWorkCompletesWithoutSchedulingTasks(CancellationToken cancellationToken)
     {
         var executor = new ConcurrentProcessingExecutor(1);
         int seen = 0;
-        ValueTask result = executor.Execute<int>(new[] { 0, 1, 2 }, (i, ct) => { seen++; return ValueTask.CompletedTask; });
+        ValueTask result = executor.Execute<int>(new[] { 0, 1, 2 }, (i, ct) => { seen++; return ValueTask.CompletedTask; }, cancellationToken: cancellationToken);
         result.IsCompletedSuccessfully.Should().BeTrue();
         await result;
         seen.Should().Be(3);
