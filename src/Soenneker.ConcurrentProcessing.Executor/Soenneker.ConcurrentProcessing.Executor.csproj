@@ -45,7 +45,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="Soenneker.Extensions.Enumerable" Version="4.0.688" />
+        <PackageReference Include="Soenneker.Extensions.Enumerable" Version="4.0.689" />
         <PackageReference Include="Soenneker.Utils.Delay" Version="4.0.104" />
     </ItemGroup>
 </Project>
